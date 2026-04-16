@@ -1,0 +1,68 @@
+name: ML Training Pipeline
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - main
+
+jobs:
+
+  linter:
+    name: "Lint Check"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install flake8
+      - run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+
+
+  train:
+    name: "GPU Training Job"
+    runs-on: ubuntu-latest
+    needs: linter
+
+    if: |
+      github.ref == 'refs/heads/main' &&
+      contains(github.event.head_commit.message, '[run-train]')
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run training script
+        run: python train.py
+
+      - name: Capture error logs
+        if: failure()
+        run: |
+          echo "===== Training Failed: $(date) =====" >  error_logs.txt
+          echo "Branch  : ${{ github.ref_name }}"     >> error_logs.txt
+          echo "Commit  : ${{ github.sha }}"          >> error_logs.txt
+          echo "Actor   : ${{ github.actor }}"        >> error_logs.txt
+          echo ""                                     >> error_logs.txt
+          echo "--- training.log (last 50 lines) ---" >> error_logs.txt
+          tail -n 50 training.log >> error_logs.txt 2>/dev/null \
+            || echo "(no training.log found)"         >> error_logs.txt
+
+      - name: Upload error_logs.txt as artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-logs-${{ github.sha }}
+          path: error_logs.txt
+          retention-days: 7
+
+      - name: Cleanup temporary cloud volumes
+        if: always()
+        run: echo "Cleaning up temporary cloud volumes..."
